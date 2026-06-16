@@ -59,7 +59,7 @@ export default {
 };
 
 /**
- * 用 Claude API 以心辰口吻生成當日貼文
+ * 用 Gemini API 以心辰口吻生成當日貼文
  */
 async function generateContent(env) {
   const today = new Date().toLocaleDateString("zh-TW", {
@@ -69,33 +69,31 @@ async function generateContent(env) {
     weekday: "long",
   });
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 512,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `今天是${today}，請以心辰的身份寫一則 Threads 貼文。`,
-        },
-      ],
-    }),
-  });
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: `今天是${today}，請以心辰的身份寫一則 Threads 貼文。` }],
+          },
+        ],
+        generationConfig: { maxOutputTokens: 512 },
+      }),
+    }
+  );
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error("Claude API 失敗: " + err);
+    throw new Error("Gemini API 失敗: " + err);
   }
 
   const data = await res.json();
-  return data.content[0].text.trim();
+  return data.candidates[0].content.parts[0].text.trim();
 }
 
 /**
