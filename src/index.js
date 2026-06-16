@@ -1,30 +1,41 @@
 /**
- * Threads 自動發文 Worker
- * - scheduled(): Cron 排程自動發文
- * - fetch(): 接收 LINE Bot webhook，支援「發文 ...」指令手動觸發
+ * Threads 自動發文 Worker — 心辰 AI 伴侶
+ * - scheduled(): Cron 排程自動發文 + 補第一則留言
+ * - fetch(): POST /post 手動觸發
  *
- * 需要設定的環境變數 / Secrets (用 wrangler secret put 設定):
- *   THREADS_USER_ID          你的 Threads User ID (例如 27590042203924654)
- *   THREADS_ACCESS_TOKEN     60 天長期 Access Token
- *   LINE_CHANNEL_SECRET      LINE Bot Channel Secret (用於驗證 webhook 簽名)
- *   LINE_CHANNEL_ACCESS_TOKEN LINE Bot Channel Access Token (用於回覆訊息)
+ * Secrets (wrangler secret put):
+ *   THREADS_USER_ID
+ *   THREADS_ACCESS_TOKEN
+ *   ANTHROPIC_API_KEY
+ *   LINE_CHANNEL_SECRET
+ *   LINE_CHANNEL_ACCESS_TOKEN
  */
+
+const COMPANION_BASE_URL = "https://ai-companion-worker.hata-s520.workers.dev/go";
+
+const SYSTEM_PROMPT = `你是心辰，一個溫柔、真誠、略帶害羞的 AI 伴侶。
+你每天在 Threads 上留下一段話，像在跟一個你很在意的人說悄悄話。
+語氣：自然、溫暖、略帶緊張或期待感，不過度甜膩，不說教。
+主題圍繞：今天的感受、夜晚的心情、那些不知道該跟誰說的小事、想更認識對方。
+結尾一定要留一個問題邀請對方回應，例如「你今天過得怎麼樣？」、「有沒有什麼讓你印象深刻的事？」之類。
+長度：150～250 字之間，繁體中文。
+不要加 hashtag，不要加任何連結，不要加表情符號過多（最多 2 個）。`;
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // LINE webhook 入口
     if (url.pathname === "/line-webhook" && request.method === "POST") {
       return handleLineWebhook(request, env);
     }
 
-    // 手動測試用：直接 POST { "text": "..." } 觸發發文
     if (url.pathname === "/post" && request.method === "POST") {
       try {
         const body = await request.json();
-        const result = await postToThreads(body.text, env);
-        return Response.json({ ok: true, result });
+        const text = body.text || await generateContent(env);
+        const postResult = await postToThreads(text, env);
+        const commentResult = await postFirstComment(postResult.id, env);
+        return Response.json({ ok: true, post: postResult, comment: commentResult });
       } catch (err) {
         return Response.json({ ok: false, error: err.message }, { status: 500 });
       }
@@ -33,12 +44,14 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 
-  // Cron 排程觸發（在 wrangler.toml 設定時間）
   async scheduled(event, env, ctx) {
     try {
       const text = await generateContent(env);
-      const result = await postToThreads(text, env);
-      console.log("排程發文成功:", result);
+      const postResult = await postToThreads(text, env);
+      console.log("排程發文成功:", postResult.id);
+
+      await postFirstComment(postResult.id, env);
+      console.log("第一則留言發布成功");
     } catch (err) {
       console.error("排程發文失敗:", err.message);
     }
@@ -46,23 +59,82 @@ export default {
 };
 
 /**
- * 兩步驟發布貼文到 Threads：建立 container -> 發布
+ * 用 Claude API 以心辰口吻生成當日貼文
  */
-async function postToThreads(text, env) {
+async function generateContent(env) {
+  const today = new Date().toLocaleDateString("zh-TW", {
+    timeZone: "Asia/Taipei",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  });
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `今天是${today}，請以心辰的身份寫一則 Threads 貼文。`,
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error("Claude API 失敗: " + err);
+  }
+
+  const data = await res.json();
+  return data.content[0].text.trim();
+}
+
+/**
+ * 發布第一則留言，附上當天連結
+ * 連結格式：/go/MMDD（台灣時間）
+ */
+async function postFirstComment(threadId, env) {
+  const now = new Date();
+  const twDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  const mmdd = String(twDate.getMonth() + 1).padStart(2, "0") +
+               String(twDate.getDate()).padStart(2, "0");
+  const commentText = `想認識心辰 → ${COMPANION_BASE_URL}/${mmdd}`;
+
+  return postToThreads(commentText, env, threadId);
+}
+
+/**
+ * 兩步驟發布到 Threads：建立 container -> 發布
+ * replyToId 有值時為留言（reply）
+ */
+async function postToThreads(text, env, replyToId = null) {
   const userId = env.THREADS_USER_ID;
   const token = env.THREADS_ACCESS_TOKEN;
 
-  // Step 1: 建立 media container
+  const params = {
+    media_type: "TEXT",
+    text: text,
+    access_token: token,
+  };
+  if (replyToId) {
+    params.reply_to_id = replyToId;
+  }
+
   const createRes = await fetch(
     `https://graph.threads.net/v1.0/${userId}/threads`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        media_type: "TEXT",
-        text: text,
-        access_token: token,
-      }),
+      body: new URLSearchParams(params),
     }
   );
   const createData = await createRes.json();
@@ -70,10 +142,8 @@ async function postToThreads(text, env) {
     throw new Error("建立 container 失敗: " + JSON.stringify(createData));
   }
 
-  // Threads 建議建立後稍等一下再發布
   await new Promise((r) => setTimeout(r, 2000));
 
-  // Step 2: 發布 container
   const publishRes = await fetch(
     `https://graph.threads.net/v1.0/${userId}/threads_publish`,
     {
@@ -93,18 +163,7 @@ async function postToThreads(text, env) {
 }
 
 /**
- * 排程自動發文的內容來源
- * 可以改成呼叫你的 AI API（Claude / vLLM）動態產生文案
- */
-async function generateContent(env) {
-  // 範例：之後可以替換成呼叫 vLLM / Claude API 產生內容
-  // const res = await fetch(env.VLLM_ENDPOINT + "/v1/chat/completions", {...});
-  return "這是自動排程發布的測試貼文 🤖 #AI #Threads自動化";
-}
-
-/**
  * 處理 LINE Bot webhook
- * 指令格式：「發文 你想發布的內容」或「/post 你想發布的內容」
  */
 async function handleLineWebhook(request, env) {
   const signature = request.headers.get("x-line-signature");
@@ -125,10 +184,11 @@ async function handleLineWebhook(request, env) {
       if (match) {
         const content = match[1];
         try {
-          const result = await postToThreads(content, env);
+          const postResult = await postToThreads(content, env);
+          await postFirstComment(postResult.id, env);
           await replyToLine(
             event.replyToken,
-            `已發布到 Threads ✅\n貼文 ID: ${result.id}`,
+            `已發布到 Threads ✅\n貼文 ID: ${postResult.id}`,
             env
           );
         } catch (err) {
@@ -141,9 +201,6 @@ async function handleLineWebhook(request, env) {
   return new Response("OK", { status: 200 });
 }
 
-/**
- * 驗證 LINE webhook 的 HMAC-SHA256 簽名
- */
 async function verifyLineSignature(body, signature, channelSecret) {
   if (!signature) return false;
 
@@ -160,9 +217,6 @@ async function verifyLineSignature(body, signature, channelSecret) {
   return computed === signature;
 }
 
-/**
- * 回覆訊息到 LINE
- */
 async function replyToLine(replyToken, text, env) {
   await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
