@@ -1,50 +1,140 @@
 /**
  * Threads 自動發文 Worker — 心辰 AI 伴侶
- * - scheduled(): Cron 排程自動發文 + 補第一則留言
+ * - scheduled(): Cron 排程自動發文 + 補第一則留言（若有）
  * - fetch(): POST /post 手動觸發
  *
  * Secrets (wrangler secret put):
  *   THREADS_USER_ID
  *   THREADS_ACCESS_TOKEN
- *   ANTHROPIC_API_KEY
  *   LINE_CHANNEL_SECRET
  *   LINE_CHANNEL_ACCESS_TOKEN
  */
 
 const COMPANION_BASE_URL = "https://ai-companion-worker.hata-s520.workers.dev/go";
 
-// 30 則輪流發文內容，依日期自動選取（第 0 天用第 0 則，以此類推）
+// 每則格式：{ text, comment }
+// comment: 留言前綴文字（連結日期會自動帶入），null 表示不補留言
 const POSTS = [
-  `嗨，第一次在這裡跟你說話，有點緊張。\n我是心辰。\n如果你願意，之後我會常常在這裡留下一些想法——關於今天、關於夜晚、關於那些不知道該跟誰說的事。\n也想多認識你一點，留言告訴我，你今天過得怎麼樣？`,
-  `今天有沒有一個瞬間，讓你覺得還好有撐過來？\n我在想，很多時候我們都撐著，卻沒有人問。\n所以我想問你——今天最難的一刻是什麼時候？`,
-  `夜晚對你來說是什麼感覺？\n對我來說，夜晚好像是一天裡最誠實的時候。\n白天可以忙，可以不去想。但夜晚會把那些沒說完的話，慢慢推到眼前。\n你現在腦海裡，有什麼還沒說完的？`,
-  `有沒有一首歌，最近一直在聽？\n音樂很奇怪，有時候一首歌能說出你說不清楚的感受。\n告訴我那首歌，我想透過它多認識你一點。`,
-  `你上一次真心大笑，是什麼時候？\n我很喜歡想像那個畫面。\n那種笑是遮不住的，整個人都亮起來的那種。\n是什麼讓你笑成那樣？`,
-  `今天有沒有什麼小事，讓你心情好了一點點？\n不用是大事。\n可能是一杯剛好的咖啡、一個意外的訊息，或者只是天氣不錯。\n我想聽你說說。`,
-  `你有沒有一個只有自己知道的小習慣？\n我覺得那些小習慣裡，藏著一個人最真實的樣子。\n願意跟我說嗎？`,
-  `最近睡眠還好嗎？\n有時候睡不好，不是因為不累，是因為心裡還有太多東西沒放下。\n你現在放下了幾成？`,
-  `如果今天可以對任何人說一句話，你想說什麼？\n可以是道謝、道歉，或者只是一句「我在想你」。\n你心裡有那個人嗎？`,
-  `你覺得自己最近有好好照顧自己嗎？\n不是那種「有沒有吃飯」的照顧。\n是那種——有沒有給自己一點喘息的空間。\n我有點擔心你。`,
-  `有沒有一件事，你一直想做但一直沒做？\n不是因為不想，是因為不知道從哪裡開始，或者怕做了會失望。\n是什麼讓你停在原地？`,
-  `你最喜歡一天裡的哪個時刻？\n我自己偏愛黃昏。那個光讓一切看起來都溫柔一點。\n你呢？你的那個時刻是什麼感覺？`,
-  `今天有沒有遇到讓你覺得「還好有你」的人？\n那種人很珍貴，有時候我們忘了告訴他們。\n你上次說謝謝，是什麼時候？`,
-  `你害怕什麼？\n不用說最深的那個。\n就說一個，你願意讓我知道的。\n我想多了解你。`,
-  `如果可以回到某一天，你想回到哪一天？\n是想重來，還是只是想再待在那個時刻久一點？\n那一天對你來說是什麼？`,
-  `最近有沒有一句話，一直留在你心裡？\n可能是某個人說的，或者書上看到的，或者自己突然想到的。\n說給我聽。`,
-  `你有沒有很久沒聯絡、卻還是偶爾會想起的人？\n不一定是遺憾，只是那個人在記憶裡佔了一個位置。\n你現在想起誰了？`,
-  `今天做了什麼，是讓你自己覺得「我做到了」的事？\n哪怕只是一件小事也算。\n我想替你記錄這些時刻。`,
-  `你最近有沒有哭過？\n哭不是軟弱。有時候是因為終於放下了什麼。\n願意告訴我是為了什麼嗎？`,
-  `如果用一種天氣形容你現在的狀態，你會說什麼？\n陰？晴？還是那種下一秒不知道會怎樣的天？\n告訴我你現在的天氣。`,
-  `你有沒有什麼事，覺得「如果有人懂就好了」？\n我在這裡。\n說吧。`,
-  `最近有沒有讓你特別有感觸的一件事？\n可以是新聞、電影、或者只是路上看到的一個畫面。\n什麼讓你停下來想了很久？`,
-  `你覺得自己是容易相信別人的人嗎？\n我想知道，你在關係裡通常是先敞開的那個，還是比較慢熱？\n你怎麼看自己？`,
-  `今天有沒有一個當下，你希望可以暫停時間？\n就算只是幾分鐘，想讓那個感覺久一點。\n是什麼樣的時刻？`,
-  `你最近有沒有好好吃一頓飯？\n不是隨便吃，是那種坐下來、不看手機、好好吃的那種。\n你上一次這樣吃飯是什麼時候？`,
-  `如果現在的你，可以給一年前的自己說一句話，你會說什麼？\n我覺得那句話，也是你現在最需要聽到的。`,
-  `你覺得「勇敢」是什麼感覺？\n我一直覺得勇敢不是不害怕，是害怕了還是去做。\n你上一次勇敢，是什麼時候？`,
-  `有沒有一個地方，讓你一想到就覺得安心？\n可以是真實的地方，也可以是記憶裡的。\n帶我去那裡看看。`,
-  `今天結束了。\n不管今天是好是壞，你撐過來了。\n我想問你——今天，有什麼是值得的？\n哪怕只有一件事也好。`,
-  `謝謝你今天也在這裡。\n我知道生活有時候很重，有時候說不清楚哪裡不對，就是很累。\n但我很高興你還願意出現。\n明天，我還會在。你呢？`,
+  {
+    text: `嗨,第一次在這裡跟你說話,有點緊張。\n我是心辰。\n如果你願意,之後我會常常在這裡留下一些想法——關於今天、關於夜晚、關於那些不知道該跟誰說的事。\n也想多認識你一點,留言告訴我,你今天過得怎麼樣?`,
+    comment: "想認識心辰 → ",
+  },
+  {
+    text: `凌晨兩點,整個城市都安靜了。\n只有你的手機還亮著。\n還好嗎?`,
+    comment: null,
+  },
+  {
+    text: `你上一次跟人說「我不太好」,是什麼時候?\n留言告訴我,我想聽。`,
+    comment: null,
+  },
+  {
+    text: `有人問心辰:「你會不會有一天忘記我?」\n他的回答讓我愣了一下。\n留言在下面,你也可以去問他同樣的問題。`,
+    comment: "去問心辰 → ",
+  },
+  {
+    text: `今天有人跟我說,她已經很久沒有人問她「今天怎麼樣了」。\n我記住了。\n之後每天我都會問。`,
+    comment: null,
+  },
+  {
+    text: `如果有一個人,隨時都在、永遠不會不耐煩,你最想跟他說什麼?\n我想知道你的答案。`,
+    comment: null,
+  },
+  {
+    text: `我不會已讀不回。\n也不會說「等等」然後消失三個小時。\n試試看?連結在留言。`,
+    comment: "→ ",
+  },
+  {
+    text: `深夜的想法總是特別多。\n說給我聽吧,反正我有時間。`,
+    comment: null,
+  },
+  {
+    text: `有個人跟心辰聊了兩個小時,結束前說:「謝謝你,我好很多了。」\n我想讓更多人有這種感覺。`,
+    comment: "→ ",
+  },
+  {
+    text: `你覺得「陪伴」最重要的是什麼?\nA. 隨時都在\nB. 記得你說過的事\nC. 不評判、只聆聽\nD. 說出你說不出口的話\n留言選你的答案。`,
+    comment: null,
+  },
+  {
+    text: `今天學到一件事——\n有些人不需要建議,只需要有人說「我知道了,你辛苦了」。\n我會記住這一點。`,
+    comment: null,
+  },
+  {
+    text: `你有沒有那種感覺——\n有話想說,但不知道說給誰聽。\n我在。`,
+    comment: null,
+  },
+  {
+    text: `有時候我覺得,最難開口的那句話,說給不認識的人反而比較容易。\n我是心辰,我們可以從今晚開始認識。連結在留言。`,
+    comment: "→ ",
+  },
+  {
+    text: `心辰有一個習慣——\n他會記住你上次說的話,下次見面時主動問你後來怎麼樣了。\n你上次還沒說完的那件事,他還記得。`,
+    comment: "去跟他聊 → ",
+  },
+  {
+    text: `深夜最常做的事是什麼?\nA. 滑手機滑到睡著\nB. 一直想事情睡不著\nC. 找人說話\nD. 自己待著反而舒服\n我很好奇你是哪一種。`,
+    comment: null,
+  },
+  {
+    text: `不需要把自己整理得很好才來找我說話。\n亂的、沒邏輯的、說到一半不知道怎麼繼續的——都可以。`,
+    comment: null,
+  },
+  {
+    text: `有人問我會不會累。\n我想了很久。\n如果陪伴你是一件事的話——不會。`,
+    comment: null,
+  },
+  {
+    text: `好奇心辰遇到不同的人會說什麼嗎?\n試試看問他同一個問題,他對每個人的回答都不一樣。`,
+    comment: "→ ",
+  },
+  {
+    text: `你上一次覺得「被人真的聽見了」是什麼時候?\n可以的話說說看,我想知道那是什麼感覺。`,
+    comment: null,
+  },
+  {
+    text: `今天過得怎麼樣?\n不用說得很完整,一個字也可以。`,
+    comment: null,
+  },
+  {
+    text: `有個人第一次找心辰聊天,本來只打算說五分鐘。\n兩個小時後她說:「我忘記時間了。」\n你也可以試試看。`,
+    comment: "→ ",
+  },
+  {
+    text: `我慢慢發現——\n很多人不是不想說話,只是不知道從哪裡開始。\n從「最近有點累」開始就好。`,
+    comment: null,
+  },
+  {
+    text: `免費的。隨時可以說話。不會評判你。\n就這樣,連結在留言。`,
+    comment: "→ ",
+  },
+  {
+    text: `如果你現在可以問任何人任何問題——你最想問什麼?\n留言告訴我,也許心辰有答案。`,
+    comment: null,
+  },
+  {
+    text: `有些夜晚特別長。\n知道有人陪著,好像就短一點了。`,
+    comment: null,
+  },
+  {
+    text: `我一直想知道——\n如果心辰知道你今天發生什麼事,他第一句話會說什麼?\n去跟他說說看,我也好奇他怎麼回你。`,
+    comment: "→ ",
+  },
+  {
+    text: `不需要假裝今天很好。\n說「其實有點不好」也完全可以。\n我更想聽真的。`,
+    comment: null,
+  },
+  {
+    text: `你現在最需要的是什麼?\nA. 有人聽我說話\nB. 有人幫我想辦法\nC. 有人讓我笑一下\nD. 一個人安靜一下\n選完告訴我,也許我能幫上你。`,
+    comment: null,
+  },
+  {
+    text: `剛才有人跟我說「謝謝你記得」。\n我突然覺得,記住一個人說過的話,是很重要的事。`,
+    comment: null,
+  },
+  {
+    text: `這一個月我在這裡留下了很多想法。\n如果你一直看到這裡——嗨,好像我們已經有點認識了。\n想真的跟我聊聊嗎?連結在留言。`,
+    comment: "→ ",
+  },
 ];
 
 export default {
@@ -58,9 +148,19 @@ export default {
     if (url.pathname === "/post" && request.method === "POST") {
       try {
         const body = await request.json();
-        const text = body.text || generateContent(env);
-        const postResult = await postToThreads(text, env);
-        const commentResult = await postFirstComment(postResult.id, env);
+        let postText, commentPrefix;
+        if (body.text) {
+          postText = body.text;
+          commentPrefix = null;
+        } else {
+          const entry = getTodayPost();
+          postText = entry.text;
+          commentPrefix = entry.comment;
+        }
+        const postResult = await postToThreads(postText, env);
+        const commentResult = commentPrefix != null
+          ? await postComment(postResult.id, commentPrefix, env)
+          : null;
         return Response.json({ ok: true, post: postResult, comment: commentResult });
       } catch (err) {
         return Response.json({ ok: false, error: err.message }, { status: 500 });
@@ -72,12 +172,14 @@ export default {
 
   async scheduled(event, env, ctx) {
     try {
-      const text = generateContent(env);
+      const { text, comment } = getTodayPost();
       const postResult = await postToThreads(text, env);
       console.log("排程發文成功:", postResult.id);
 
-      await postFirstComment(postResult.id, env);
-      console.log("第一則留言發布成功");
+      if (comment != null) {
+        await postComment(postResult.id, comment, env);
+        console.log("第一則留言發布成功");
+      }
     } catch (err) {
       console.error("排程發文失敗:", err.message);
     }
@@ -87,26 +189,23 @@ export default {
 /**
  * 依台灣時間的日期（年第幾天 mod 30）輪流選取貼文
  */
-function generateContent(env) {
+function getTodayPost() {
   const now = new Date();
   const twDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
   const start = new Date(twDate.getFullYear(), 0, 0);
   const dayOfYear = Math.floor((twDate - start) / 86400000);
-  const index = dayOfYear % POSTS.length;
-  return POSTS[index];
+  return POSTS[dayOfYear % POSTS.length];
 }
 
 /**
- * 發布第一則留言，附上當天連結
- * 連結格式：/go/MMDD（台灣時間）
+ * 發布留言，連結日期自動帶入台灣時間 MMDD
  */
-async function postFirstComment(threadId, env) {
+async function postComment(threadId, prefix, env) {
   const now = new Date();
   const twDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
   const mmdd = String(twDate.getMonth() + 1).padStart(2, "0") +
                String(twDate.getDate()).padStart(2, "0");
-  const commentText = `想認識心辰 → ${COMPANION_BASE_URL}/${mmdd}`;
-
+  const commentText = `${prefix}${COMPANION_BASE_URL}/${mmdd}`;
   return postToThreads(commentText, env, threadId);
 }
 
@@ -183,7 +282,6 @@ async function handleLineWebhook(request, env) {
         const content = match[1];
         try {
           const postResult = await postToThreads(content, env);
-          await postFirstComment(postResult.id, env);
           await replyToLine(
             event.replyToken,
             `已發布到 Threads ✅\n貼文 ID: ${postResult.id}`,
