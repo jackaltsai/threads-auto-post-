@@ -251,8 +251,9 @@ async function postComment(threadId, prefix, env) {
 async function searchAndEngage(env) {
   const token = env.THREADS_ACCESS_TOKEN;
 
+  const userId = env.THREADS_USER_ID;
   const searchRes = await fetch(
-    `https://graph.threads.net/v1.0/threads/search?q=${encodeURIComponent(SEARCH_KEYWORD)}&fields=id,text,username&access_token=${token}`
+    `https://graph.threads.net/v1.0/${userId}/threads/search?q=${encodeURIComponent(SEARCH_KEYWORD)}&fields=id,text,username&access_token=${token}`
   );
   if (!searchRes.ok) {
     const err = await searchRes.text();
