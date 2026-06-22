@@ -5,7 +5,10 @@ compatibility_date = "2026-06-01"
 # Cron 排程設定 (UTC 時間)
 # 範例：每天台灣時間早上 9 點發文 = UTC 凌晨 1 點
 [triggers]
-crons = ["0 1 * * *"]
+crons = [
+  "0 1 * * *",   # 每天台灣時間 09:00 自動發文
+  "0 15 * * *",  # 每天台灣時間 23:00 搜尋「失眠」並互動
+]
 
 # 機密變數請用 wrangler secret put 設定，不要寫在這裡：
 #   wrangler secret put THREADS_USER_ID

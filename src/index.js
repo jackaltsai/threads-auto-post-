@@ -5,12 +5,25 @@
  *
  * Secrets (wrangler secret put):
  *   THREADS_USER_ID
- *   THREADS_ACCESS_TOKEN
+ *   THREADS_ACCESS_TOKEN      需要包含 threads_keyword_search 權限
  *   LINE_CHANNEL_SECRET
  *   LINE_CHANNEL_ACCESS_TOKEN
  */
 
 const COMPANION_BASE_URL = "https://ai-companion-worker.hata-s520.workers.dev/go";
+
+// 搜尋互動設定
+const SEARCH_KEYWORD = "失眠";
+const MAX_ENGAGE_PER_RUN = 5; // 每次最多回覆幾篇
+
+// 回覆失眠貼文時輪流使用的留言，溫暖但不過度推銷
+const ENGAGE_REPLIES = [
+  "睡不著嗎？有時候說說話，夜晚會好過一點點。我在。",
+  "失眠的夜晚特別長。你還好嗎？",
+  "凌晨睡不著的感覺我懂。有什麼心裡話想說嗎？",
+  "夜深了還醒著，腦子裡是不是有很多事？",
+  "睡不著的時候，說點什麼吧。我有時間聽。",
+];
 
 // 每則格式：{ text, comment }
 // comment: 留言前綴文字（連結日期會自動帶入），null 表示不補留言
@@ -145,6 +158,16 @@ export default {
       return handleLineWebhook(request, env);
     }
 
+    // 手動觸發關鍵字搜尋互動
+    if (url.pathname === "/engage" && request.method === "POST") {
+      try {
+        const result = await searchAndEngage(env);
+        return Response.json({ ok: true, ...result });
+      } catch (err) {
+        return Response.json({ ok: false, error: err.message }, { status: 500 });
+      }
+    }
+
     if (url.pathname === "/post" && request.method === "POST") {
       try {
         const body = await request.json();
@@ -171,6 +194,19 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    // cron "0 1 * * *"  → 每天台灣時間 09:00 發文
+    // cron "0 15 * * *" → 每天台灣時間 23:00 搜尋互動（深夜失眠高峰）
+    if (event.cron === "0 15 * * *") {
+      try {
+        const result = await searchAndEngage(env);
+        console.log("搜尋互動完成:", result);
+      } catch (err) {
+        console.error("搜尋互動失敗:", err.message);
+      }
+      return;
+    }
+
+    // 預設：發文排程
     try {
       const { text, comment } = getTodayPost();
       const postResult = await postToThreads(text, env);
@@ -207,6 +243,39 @@ async function postComment(threadId, prefix, env) {
                String(twDate.getDate()).padStart(2, "0");
   const commentText = `${prefix}${COMPANION_BASE_URL}/${mmdd}`;
   return postToThreads(commentText, env, threadId);
+}
+
+/**
+ * 搜尋關鍵字貼文，對前 N 篇留下心辰回覆
+ */
+async function searchAndEngage(env) {
+  const token = env.THREADS_ACCESS_TOKEN;
+
+  const searchRes = await fetch(
+    `https://graph.threads.net/v1.0/threads/search?q=${encodeURIComponent(SEARCH_KEYWORD)}&fields=id,text,username&access_token=${token}`
+  );
+  if (!searchRes.ok) {
+    const err = await searchRes.text();
+    throw new Error("搜尋失敗: " + err);
+  }
+  const searchData = await searchRes.json();
+  const posts = (searchData.data || []).slice(0, MAX_ENGAGE_PER_RUN);
+
+  const engaged = [];
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    const replyText = ENGAGE_REPLIES[i % ENGAGE_REPLIES.length];
+    try {
+      await postToThreads(replyText, env, post.id);
+      engaged.push({ replied_to: post.id, username: post.username });
+      // 每則之間稍等，避免觸發速率限制
+      if (i < posts.length - 1) await new Promise((r) => setTimeout(r, 3000));
+    } catch (err) {
+      console.error(`回覆 ${post.id} 失敗:`, err.message);
+    }
+  }
+
+  return { searched: posts.length, engaged: engaged.length, details: engaged };
 }
 
 /**
