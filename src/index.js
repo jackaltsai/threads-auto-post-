@@ -150,9 +150,61 @@ const POSTS = [
   },
 ];
 
+const PRIVACY_HTML = `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隱私政策 | 心辰 Threads</title>
+<style>
+  body { font-family: -apple-system, "Helvetica Neue", "PingFang TC", sans-serif;
+         max-width: 720px; margin: 0 auto; padding: 40px 20px; line-height: 1.8; color: #1a1a1a; }
+  h1 { font-size: 1.6rem; } h2 { font-size: 1.2rem; margin-top: 2rem; }
+  .updated { color: #666; font-size: 0.9rem; }
+  a { color: #0066cc; }
+</style>
+</head>
+<body>
+  <h1>隱私政策</h1>
+  <p class="updated">最後更新日期：2026 年 6 月 16 日</p>
+
+  <p>本應用程式（以下稱「本服務」）為一個透過 Threads API 自動發布貼文與互動的工具。我們重視您的隱私，本政策說明本服務如何處理資料。</p>
+
+  <h2>一、我們蒐集的資料</h2>
+  <p>本服務僅使用 Threads 帳號擁有者本人授權的存取權杖（Access Token），用於代為發布貼文、回覆留言，以及搜尋公開內容。本服務不會蒐集、儲存或分享其他使用者的個人資料。</p>
+
+  <h2>二、資料的使用方式</h2>
+  <p>授權的存取權杖僅用於：</p>
+  <ul>
+    <li>於 Threads 帳號上發布貼文</li>
+    <li>對相關公開貼文發布回覆</li>
+    <li>依關鍵字搜尋公開內容</li>
+  </ul>
+
+  <h2>三、資料的儲存與保護</h2>
+  <p>存取權杖以加密方式儲存於 Cloudflare Workers 的機密環境變數中，不會公開或提供給第三方。</p>
+
+  <h2>四、資料分享</h2>
+  <p>本服務不會將任何資料出售、出租或分享給第三方。</p>
+
+  <h2>五、資料刪除</h2>
+  <p>您可隨時撤銷本應用程式於 Threads 的授權，撤銷後本服務即無法再存取您的帳號。如需刪除相關資料，請來信聯絡。</p>
+
+  <h2>六、聯絡方式</h2>
+  <p>如對本隱私政策有任何疑問，請聯絡：<a href="mailto:hata.s520@gmail.com">hata.s520@gmail.com</a></p>
+</body>
+</html>`;
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    // 隱私政策頁面（App Review 需要）
+    if (url.pathname === "/privacy" && request.method === "GET") {
+      return new Response(PRIVACY_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
 
     if (url.pathname === "/line-webhook" && request.method === "POST") {
       return handleLineWebhook(request, env);
