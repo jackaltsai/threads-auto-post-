@@ -10,7 +10,7 @@
  *   LINE_CHANNEL_ACCESS_TOKEN
  */
 
-const COMPANION_BASE_URL = "https://ai-companion-worker.hata-s520.workers.dev/go";
+const COMPANION_BASE_URL = "https://heartchen.com/go";
 
 // 搜尋互動設定
 const SEARCH_KEYWORD = "失眠";
