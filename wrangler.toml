@@ -2,6 +2,13 @@ name = "threads-auto-post"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
 
+# 自訂網域路由：讓 heartchen.com/privacy 由本 Worker 提供隱私政策頁面
+# 其他 heartchen.com 路徑不受影響（仍走原本綁定的 Worker）
+# 前提：heartchen.com 這個 zone 已加入同一個 Cloudflare 帳號
+[[routes]]
+pattern = "heartchen.com/privacy"
+zone_name = "heartchen.com"
+
 # Cron 排程設定 (UTC 時間)
 # 範例：每天台灣時間早上 9 點發文 = UTC 凌晨 1 點
 [triggers]
