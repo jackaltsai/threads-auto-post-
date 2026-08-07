@@ -200,7 +200,7 @@ export default {
     const url = new URL(request.url);
 
     // 隱私政策頁面（App Review 需要）
-    if (url.pathname === "/privacy" && request.method === "GET") {
+    if (url.pathname === "/privacy" && (request.method === "GET" || request.method === "HEAD")) {
       return new Response(PRIVACY_HTML, {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
